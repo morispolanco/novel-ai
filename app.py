@@ -17,7 +17,10 @@ headers = {
 def make_api_request(payload):
     response = requests.post(api_url, headers=headers, data=json.dumps(payload))
     response.raise_for_status()
-    return response.json()
+    result = response.json()
+    # Debug: Log full API response
+    # st.write(f"Full API response: {result}")
+    return result
 
 # Initialize session state
 def initialize_session_state():
@@ -54,21 +57,27 @@ def validate_api_response(result):
 
 # Helper function to clean and extract JSON from response
 def clean_json_content(content):
+    # Remove leading/trailing whitespace
+    content = content.strip()
+    
     # Try to extract JSON from within ```json ... ``` blocks
     json_pattern = r'```json\s*([\s\S]*?)\s*```'
-    match = re.search(json_pattern, content)
+    match = re.search(json_pattern, content, re.MULTILINE)
     if match:
         content = match.group(1).strip()
     
-    # Remove any leading/trailing non-JSON text
+    # Extract JSON by finding first { or [ and last } or ]
     try:
-        # Find the first { or [ and last } or ]
         start = content.find('{') if '{' in content else content.find('[')
         end = content.rfind('}') if '}' in content else content.rfind(']')
-        if start != -1 and end != -1:
+        if start != -1 and end != -1 and end > start:
             content = content[start:end + 1]
+        
+        # Attempt to validate JSON
+        json.loads(content)
         return content
-    except:
+    except json.JSONDecodeError:
+        # If JSON is invalid, return original content for debugging
         return content
 
 # Helper function to ensure em-dash dialogue
@@ -113,7 +122,7 @@ def generate_initial_outline():
                     st.session_state.novel_outline_data = parsed_json
                 except json.JSONDecodeError as e:
                     st.session_state.error = f"El contenido recibido de la API no es un JSON válido: {str(e)}. Contenido: {cleaned_content}"
-                    st.session_state.novel_outline_data = {"raw_content": content}  # Store raw content as fallback
+                    st.session_state.novel_outline_data = {"raw_content": content}
             progress_bar.progress(100)
     except requests.exceptions.RequestException as err:
         st.session_state.error = f"Error al conectar con la API: {str(err)}. Revisa tu conexión."
@@ -128,6 +137,11 @@ def generate_characters():
 
     if not (st.session_state.novel_outline_data and st.session_state.narrative_technique and st.session_state.narrator_pov):
         st.session_state.error = "Genera primero el esquema inicial y selecciona la técnica narrativa y el punto de vista."
+        st.session_state.loading_states["characters"] = False
+        return
+
+    if isinstance(st.session_state.novel_outline_data, dict) and "raw_content" in st.session_state.novel_outline_data:
+        st.session_state.error = "El esquema inicial no se generó correctamente (JSON inválido). Genera el esquema nuevamente."
         st.session_state.loading_states["characters"] = False
         return
 
@@ -156,10 +170,12 @@ def generate_characters():
                 cleaned_content = clean_json_content(content)
                 try:
                     parsed_json = json.loads(cleaned_content)
+                    if not isinstance(parsed_json, list):
+                        raise ValueError("La respuesta de la API no es un array JSON válido.")
                     st.session_state.characters_data = parsed_json
-                except json.JSONDecodeError as e:
+                except (json.JSONDecodeError, ValueError) as e:
                     st.session_state.error = f"El contenido recibido de la API no es un JSON válido: {str(e)}. Contenido: {cleaned_content}"
-                    st.session_state.characters_data = {"raw_content": content}  # Store raw content as fallback
+                    st.session_state.characters_data = {"raw_content": content}
             progress_bar.progress(100)
     except requests.exceptions.RequestException as err:
         st.session_state.error = f"Error al generar personajes: {str(err)}. Revisa tu conexión."
@@ -175,6 +191,11 @@ def generate_setting_details():
     if not (st.session_state.novel_outline_data and st.session_state.characters_data and
             st.session_state.narrative_technique and st.session_state.narrator_pov):
         st.session_state.error = "Genera primero el esquema inicial, los personajes y selecciona la técnica narrativa y el punto de vista."
+        st.session_state.loading_states["setting"] = False
+        return
+
+    if isinstance(st.session_state.characters_data, dict) and "raw_content" in st.session_state.characters_data:
+        st.session_state.error = "Los personajes no se generaron correctamente (JSON inválido). Genera los personajes nuevamente."
         st.session_state.loading_states["setting"] = False
         return
 
@@ -214,6 +235,11 @@ def generate_plot_twist():
             st.session_state.setting_details and st.session_state.narrative_technique and
             st.session_state.narrator_pov):
         st.session_state.error = "Genera el esquema inicial, los personajes, la ambientación y selecciona la técnica narrativa y el punto de vista antes de generar giros argumentales."
+        st.session_state.loading_states["plot_twist"] = False
+        return
+
+    if isinstance(st.session_state.characters_data, dict) and "raw_content" in st.session_state.characters_data:
+        st.session_state.error = "Los personajes no se generaron correctamente (JSON inválido). Genera los personajes nuevamente."
         st.session_state.loading_states["plot_twist"] = False
         return
 
@@ -258,6 +284,11 @@ def generate_table_of_contents():
         st.session_state.loading_states["chapters"] = False
         return
 
+    if isinstance(st.session_state.characters_data, dict) and "raw_content" in st.session_state.characters_data:
+        st.session_state.error = "Los personajes no se generaron correctamente (JSON inválido). Genera los personajes nuevamente."
+        st.session_state.loading_states["chapters"] = False
+        return
+
     if not 9 <= st.session_state.num_chapters <= 30:
         st.session_state.error = "El número de capítulos debe estar entre 9 y 30."
         st.session_state.loading_states["chapters"] = False
@@ -291,10 +322,12 @@ def generate_table_of_contents():
                 cleaned_content = clean_json_content(content)
                 try:
                     parsed_json = json.loads(cleaned_content)
+                    if not isinstance(parsed_json, list):
+                        raise ValueError("La respuesta de la API no es un array JSON válido.")
                     st.session_state.chapters_data = parsed_json
-                except json.JSONDecodeError as e:
+                except (json.JSONDecodeError, ValueError) as e:
                     st.session_state.error = f"El contenido recibido de la API no es un JSON válido: {str(e)}. Contenido: {cleaned_content}"
-                    st.session_state.chapters_data = {"raw_content": content}  # Store raw content as fallback
+                    st.session_state.chapters_data = {"raw_content": content}
             progress_bar.progress(100)
     except requests.exceptions.RequestException as err:
         st.session_state.error = f"Error al generar tabla de contenidos: {str(err)}. Revisa tu conexión."
@@ -309,6 +342,11 @@ def generate_chapter_content(chapter, index):
     if not (st.session_state.novel_outline_data and st.session_state.chapters_data and
             st.session_state.narrative_technique and st.session_state.narrator_pov):
         st.session_state.error = "Genera primero el esquema de la novela, la tabla de contenidos y selecciona la técnica narrativa y el punto de vista."
+        st.session_state.loading_states[f"chapter_content_{index}"] = False
+        return
+
+    if isinstance(st.session_state.chapters_data, dict) and "raw_content" in st.session_state.chapters_data:
+        st.session_state.error = "La tabla de contenidos no se generó correctamente (JSON inválido). Genera la tabla nuevamente."
         st.session_state.loading_states[f"chapter_content_{index}"] = False
         return
 
@@ -360,6 +398,11 @@ def generate_chapter_conflict(chapter, index):
         st.session_state.loading_states[f"chapter_conflict_{index}"] = False
         return
 
+    if isinstance(st.session_state.chapters_data, dict) and "raw_content" in st.session_state.chapters_data:
+        st.session_state.error = "La tabla de contenidos no se generó correctamente (JSON inválido). Genera la tabla nuevamente."
+        st.session_state.loading_states[f"chapter_conflict_{index}"] = False
+        return
+
     conflict_prompt = f"""
     Basándote en la síntesis general de la novela: "{st.session_state.novel_outline_data['synthesis']}",
     la trama general: "{st.session_state.novel_outline_data['plot']}",
@@ -396,6 +439,11 @@ def generate_chapter_scene_description(chapter, index):
     if not (st.session_state.novel_outline_data and st.session_state.chapters_data and
             st.session_state.narrative_technique and st.session_state.narrator_pov):
         st.session_state.error = "Genera primero el esquema de la novela, la tabla de contenidos y selecciona la técnica narrativa y el punto de vista."
+        st.session_state.loading_states[f"chapter_scene_{index}"] = False
+        return
+
+    if isinstance(st.session_state.chapters_data, dict) and "raw_content" in st.session_state.chapters_data:
+        st.session_state.error = "La tabla de contenidos no se generó correctamente (JSON inválido). Genera la tabla nuevamente."
         st.session_state.loading_states[f"chapter_scene_{index}"] = False
         return
 
@@ -438,6 +486,11 @@ def generate_chapter_dialogue_snippet(chapter, index):
         st.session_state.loading_states[f"chapter_dialogue_{index}"] = False
         return
 
+    if isinstance(st.session_state.chapters_data, dict) and "raw_content" in st.session_state.chapters_data:
+        st.session_state.error = "La tabla de contenidos no se generó correctamente (JSON inválido). Genera la tabla nuevamente."
+        st.session_state.loading_states[f"chapter_dialogue_{index}"] = False
+        return
+
     dialogue_prompt = f"""
     Basándote en la síntesis general de la novela: "{st.session_state.novel_outline_data['synthesis']}",
     la trama general: "{st.session_state.novel_outline_data['plot']}",
@@ -476,6 +529,11 @@ def generate_chapter_sub_plot_ideas(chapter, index):
         st.session_state.loading_states[f"chapter_sub_plot_{index}"] = False
         return
 
+    if isinstance(st.session_state.chapters_data, dict) and "raw_content" in st.session_state.chapters_data:
+        st.session_state.error = "La tabla de contenidos no se generó correctamente (JSON inválido). Genera la tabla nuevamente."
+        st.session_state.loading_states[f"chapter_sub_plot_{index}"] = False
+        return
+
     sub_plot_prompt = f"""
     Basándote en la síntesis general de la novela: "{st.session_state.novel_outline_data['synthesis']}",
     la trama general: "{st.session_state.novel_outline_data['plot']}",
@@ -511,6 +569,11 @@ def generate_chapter_key_events(chapter, index):
     if not (st.session_state.novel_outline_data and st.session_state.chapters_data and
             st.session_state.narrative_technique and st.session_state.narrator_pov):
         st.session_state.error = "Genera primero el esquema de la novela, la tabla de contenidos y selecciona la técnica narrativa y el punto de vista."
+        st.session_state.loading_states[f"chapter_key_events_{index}"] = False
+        return
+
+    if isinstance(st.session_state.chapters_data, dict) and "raw_content" in st.session_state.chapters_data:
+        st.session_state.error = "La tabla de contenidos no se generó correctamente (JSON inválido). Genera la tabla nuevamente."
         st.session_state.loading_states[f"chapter_key_events_{index}"] = False
         return
 
