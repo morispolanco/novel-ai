@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import json
+import re
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 # API configuration
@@ -51,6 +52,25 @@ def validate_api_response(result):
         return None, "Respuesta de la API inválida o vacía."
     return result["choices"][0]["message"]["content"], None
 
+# Helper function to clean and extract JSON from response
+def clean_json_content(content):
+    # Try to extract JSON from within ```json ... ``` blocks
+    json_pattern = r'```json\s*([\s\S]*?)\s*```'
+    match = re.search(json_pattern, content)
+    if match:
+        content = match.group(1).strip()
+    
+    # Remove any leading/trailing non-JSON text
+    try:
+        # Find the first { or [ and last } or ]
+        start = content.find('{') if '{' in content else content.find('[')
+        end = content.rfind('}') if '}' in content else content.rfind(']')
+        if start != -1 and end != -1:
+            content = content[start:end + 1]
+        return content
+    except:
+        return content
+
 # Helper function to ensure em-dash dialogue
 def ensure_em_dash_dialogue(text):
     return text.replace('"', '—')
@@ -71,7 +91,11 @@ def generate_initial_outline():
     else:
         theme = f"una novela histórica de aventuras ambientada en {theme}. La novela debe presentar un protagonista fuerte, intrigas, y una visión realista de la época."
 
-    prompt = f"Genera la síntesis, la descripción y la trama de {theme} La respuesta debe estar en formato JSON."
+    prompt = f"""
+    Genera la síntesis, la descripción y la trama de {theme}. La respuesta debe ser un objeto JSON válido con las propiedades 'synthesis', 'description' y 'plot'. 
+    Asegúrate de que la respuesta contenga SOLO el objeto JSON, sin texto adicional, explicaciones ni bloques de código (```). Ejemplo:
+    {{"synthesis": "Una novela...", "description": "Ambientada en...", "plot": "La historia sigue..."}}.
+    """
     payload = {"model": api_model, "messages": [{"role": "user", "content": prompt}]}
 
     try:
@@ -83,11 +107,13 @@ def generate_initial_outline():
             if error:
                 st.session_state.error = error
             else:
+                cleaned_content = clean_json_content(content)
                 try:
-                    parsed_json = json.loads(content)
+                    parsed_json = json.loads(cleaned_content)
                     st.session_state.novel_outline_data = parsed_json
-                except json.JSONDecodeError:
-                    st.session_state.error = "El contenido recibido de la API no es un JSON válido."
+                except json.JSONDecodeError as e:
+                    st.session_state.error = f"El contenido recibido de la API no es un JSON válido: {str(e)}. Contenido: {cleaned_content}"
+                    st.session_state.novel_outline_data = {"raw_content": content}  # Store raw content as fallback
             progress_bar.progress(100)
     except requests.exceptions.RequestException as err:
         st.session_state.error = f"Error al conectar con la API: {str(err)}. Revisa tu conexión."
@@ -111,7 +137,10 @@ def generate_characters():
     Trama General: {st.session_state.novel_outline_data['plot']}
     Técnica Narrativa: {st.session_state.narrative_technique}
     Punto de Vista del Narrador: {st.session_state.narrator_pov}
-    Genera 3-5 personajes principales para esta novela. Para cada personaje, proporciona su nombre, su rol en la historia (ej. 'protagonista', 'antagonista', 'aliado', 'interés amoroso'), y una breve descripción de su personalidad y su relevancia para la trama. Responde en formato JSON como un array de objetos, donde cada objeto tiene las propiedades 'name', 'role', y 'description'.
+    Genera 3-5 personajes principales para esta novela. Para cada personaje, proporciona su nombre, su rol en la historia (ej. 'protagonista', 'antagonista', 'aliado', 'interés amoroso'), y una breve descripción de su personalidad y su relevancia para la trama. 
+    Responde con un array JSON válido que contenga objetos con las propiedades 'name', 'role' y 'description'. 
+    Asegúrate de que la respuesta contenga SOLO el array JSON, sin texto adicional, explicaciones ni bloques de código (```). Ejemplo:
+    [{{"name": "Juan", "role": "protagonista", "description": "Un joven valiente..."}}, {{"name": "Ana", "role": "aliado", "description": "Una estratega..."}}]
     """
     payload = {"model": api_model, "messages": [{"role": "user", "content": characters_prompt}]}
 
@@ -124,11 +153,13 @@ def generate_characters():
             if error:
                 st.session_state.error = error
             else:
+                cleaned_content = clean_json_content(content)
                 try:
-                    parsed_json = json.loads(content)
+                    parsed_json = json.loads(cleaned_content)
                     st.session_state.characters_data = parsed_json
-                except json.JSONDecodeError:
-                    st.session_state.error = "El contenido recibido de la API no es un JSON válido."
+                except json.JSONDecodeError as e:
+                    st.session_state.error = f"El contenido recibido de la API no es un JSON válido: {str(e)}. Contenido: {cleaned_content}"
+                    st.session_state.characters_data = {"raw_content": content}  # Store raw content as fallback
             progress_bar.progress(100)
     except requests.exceptions.RequestException as err:
         st.session_state.error = f"Error al generar personajes: {str(err)}. Revisa tu conexión."
@@ -242,7 +273,9 @@ def generate_table_of_contents():
     el punto de vista del narrador: {st.session_state.narrator_pov},
     genera una tabla de contenidos para una novela de {st.session_state.num_chapters} capítulos.
     Cada capítulo debe tener un título y una breve descripción de su contenido, siguiendo el estilo de una novela histórica de aventuras.
-    Responde en formato JSON como un array de objetos, donde cada objeto tiene las propiedades 'title' y 'description'.
+    Responde con un array JSON válido que contenga objetos con las propiedades 'title' y 'description'.
+    Asegúrate de que la respuesta contenga SOLO el array JSON, sin texto adicional, explicaciones ni bloques de código (```). Ejemplo:
+    [{{"title": "El comienzo", "description": "El protagonista descubre..."}}, {{"title": "La traición", "description": "Un aliado revela..."}}]
     """
     payload = {"model": api_model, "messages": [{"role": "user", "content": chapters_prompt}]}
 
@@ -255,11 +288,13 @@ def generate_table_of_contents():
             if error:
                 st.session_state.error = error
             else:
+                cleaned_content = clean_json_content(content)
                 try:
-                    parsed_json = json.loads(content)
+                    parsed_json = json.loads(cleaned_content)
                     st.session_state.chapters_data = parsed_json
-                except json.JSONDecodeError:
-                    st.session_state.error = "El contenido recibido de la API no es un JSON válido."
+                except json.JSONDecodeError as e:
+                    st.session_state.error = f"El contenido recibido de la API no es un JSON válido: {str(e)}. Contenido: {cleaned_content}"
+                    st.session_state.chapters_data = {"raw_content": content}  # Store raw content as fallback
             progress_bar.progress(100)
     except requests.exceptions.RequestException as err:
         st.session_state.error = f"Error al generar tabla de contenidos: {str(err)}. Revisa tu conexión."
@@ -530,14 +565,18 @@ if st.session_state.error:
 
 # Display novel outline data
 if st.session_state.novel_outline_data:
-    st.subheader("Síntesis")
-    st.write(st.session_state.novel_outline_data["synthesis"])
+    if isinstance(st.session_state.novel_outline_data, dict) and "raw_content" in st.session_state.novel_outline_data:
+        st.subheader("Esquema Inicial (Contenido Crudo - No JSON)")
+        st.write(st.session_state.novel_outline_data["raw_content"])
+    else:
+        st.subheader("Síntesis")
+        st.write(st.session_state.novel_outline_data["synthesis"])
 
-    st.subheader("Descripción")
-    st.write(st.session_state.novel_outline_data["description"])
+        st.subheader("Descripción")
+        st.write(st.session_state.novel_outline_data["description"])
 
-    st.subheader("Trama")
-    st.write(st.session_state.novel_outline_data["plot"])
+        st.subheader("Trama")
+        st.write(st.session_state.novel_outline_data["plot"])
 
     # Narrative technique and POV selection
     st.subheader("Selecciona la Técnica Narrativa y el Punto de Vista")
@@ -565,8 +604,12 @@ if st.session_state.novel_outline_data:
     # Display generated characters
     if st.session_state.characters_data:
         st.subheader("Personajes Principales")
-        for char in st.session_state.characters_data:
-            st.write(f"**{char['name']}** ({char['role']}): {char['description']}")
+        if isinstance(st.session_state.characters_data, dict) and "raw_content" in st.session_state.characters_data:
+            st.write("Contenido crudo (no JSON):")
+            st.write(st.session_state.characters_data["raw_content"])
+        else:
+            for char in st.session_state.characters_data:
+                st.write(f"**{char['name']}** ({char['role']}): {char['description']}")
 
     # Display generated setting details
     if st.session_state.setting_details:
@@ -585,52 +628,56 @@ if st.session_state.novel_outline_data:
     # Display table of contents
     if st.session_state.chapters_data:
         st.subheader(f"Tabla de Contenidos ({st.session_state.num_chapters} Capítulos)")
-        for index, chapter in enumerate(st.session_state.chapters_data):
-            st.write(f"**{chapter['title']}**")
-            st.write(chapter['description'])
+        if isinstance(st.session_state.chapters_data, dict) and "raw_content" in st.session_state.chapters_data:
+            st.write("Contenido crudo (no JSON):")
+            st.write(st.session_state.chapters_data["raw_content"])
+        else:
+            for index, chapter in enumerate(st.session_state.chapters_data):
+                st.write(f"**{chapter['title']}**")
+                st.write(chapter['description'])
 
-            # Buttons for generating chapter-specific details
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.button(f"Eventos Clave - Cap. {index + 1}"):
-                    generate_chapter_key_events(chapter, index)
-                if st.button(f"Conflicto - Cap. {index + 1}"):
-                    generate_chapter_conflict(chapter, index)
-            with col2:
-                if st.button(f"Subtramas - Cap. {index + 1}"):
-                    generate_chapter_sub_plot_ideas(chapter, index)
-                if st.button(f"Escena - Cap. {index + 1}"):
-                    generate_chapter_scene_description(chapter, index)
-            with col3:
-                if st.button(f"Diálogo - Cap. {index + 1}"):
-                    generate_chapter_dialogue_snippet(chapter, index)
-                if st.button(f"Contenido - Cap. {index + 1}"):
-                    generate_chapter_content(chapter, index)
+                # Buttons for generating chapter-specific details
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button(f"Eventos Clave - Cap. {index + 1}"):
+                        generate_chapter_key_events(chapter, index)
+                    if st.button(f"Conflicto - Cap. {index + 1}"):
+                        generate_chapter_conflict(chapter, index)
+                with col2:
+                    if st.button(f"Subtramas - Cap. {index + 1}"):
+                        generate_chapter_sub_plot_ideas(chapter, index)
+                    if st.button(f"Escena - Cap. {index + 1}"):
+                        generate_chapter_scene_description(chapter, index)
+                with col3:
+                    if st.button(f"Diálogo - Cap. {index + 1}"):
+                        generate_chapter_dialogue_snippet(chapter, index)
+                    if st.button(f"Contenido - Cap. {index + 1}"):
+                        generate_chapter_content(chapter, index)
 
-            # Display chapter-specific details
-            if st.session_state.chapter_key_events.get(index):
-                st.subheader("Eventos Clave Sugeridos")
-                st.write(st.session_state.chapter_key_events[index])
+                # Display chapter-specific details
+                if st.session_state.chapter_key_events.get(index):
+                    st.subheader("Eventos Clave Sugeridos")
+                    st.write(st.session_state.chapter_key_events[index])
 
-            if st.session_state.chapter_conflicts.get(index):
-                st.subheader("Conflicto/Obstáculo Sugerido")
-                st.write(st.session_state.chapter_conflicts[index])
+                if st.session_state.chapter_conflicts.get(index):
+                    st.subheader("Conflicto/Obstáculo Sugerido")
+                    st.write(st.session_state.chapter_conflicts[index])
 
-            if st.session_state.chapter_sub_plot_ideas.get(index):
-                st.subheader("Ideas para Subtramas")
-                st.write(st.session_state.chapter_sub_plot_ideas[index])
+                if st.session_state.chapter_sub_plot_ideas.get(index):
+                    st.subheader("Ideas para Subtramas")
+                    st.write(st.session_state.chapter_sub_plot_ideas[index])
 
-            if st.session_state.chapter_scene_descriptions.get(index):
-                st.subheader("Descripción de Escena Sugerida")
-                st.write(st.session_state.chapter_scene_descriptions[index])
+                if st.session_state.chapter_scene_descriptions.get(index):
+                    st.subheader("Descripción de Escena Sugerida")
+                    st.write(st.session_state.chapter_scene_descriptions[index])
 
-            if st.session_state.chapter_dialogue_snippets.get(index):
-                st.subheader("Fragmento de Diálogo Sugerido")
-                st.write(st.session_state.chapter_dialogue_snippets[index])
+                if st.session_state.chapter_dialogue_snippets.get(index):
+                    st.subheader("Fragmento de Diálogo Sugerido")
+                    st.write(st.session_state.chapter_dialogue_snippets[index])
 
-            if st.session_state.chapter_contents.get(index):
-                st.subheader("Contenido del Capítulo")
-                st.write(st.session_state.chapter_contents[index])
+                if st.session_state.chapter_contents.get(index):
+                    st.subheader("Contenido del Capítulo")
+                    st.write(st.session_state.chapter_contents[index])
 
     # Export novel data
     if st.button("Exportar Novela"):
